@@ -14,14 +14,26 @@ function readData(filename::String)
 	end
 
 
-	df = DataFrame(time = 1:length(len), length = len)
+	df = DataFrame(time = 1:length(len), length = len, label = filename)
 	return df, name
 end
 
 function graph(df::DataFrame, name::String)
-	draw(SVG("$name.svg", 6inch, 6inch), plot(df, x = "time (seconds)", y = "length", Geom.line, Scale.color_discrete_manual("blue", "red")))
+	draw(SVG("$name.svg", 6inch, 6inch), plot(df, x = "time", y = "length", color = "label", Geom.line, Scale.color_discrete_manual("blue", "red")))
 end
 
+function readAndPlot(filename::String)
+	df, _ = readData(filename)
+	graph(df, filename)
+	run(`./conv.sh`)
+end
 
+function contraPlot(filename1::String, filename2::String)
+	df1, _ = readData(filename1)
+	df2, _ = readData(filename2)
+	df = vcat(df1, df2)
+	graph(df, filename1 * "_" * filename2)
+	run(`./conv.sh`)
+end
 
 
