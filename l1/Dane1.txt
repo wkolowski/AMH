@@ -1,5 +1,0 @@
-size = 3000, iter = 0/6003, curPath = 101305.055, bestPath = 101305.055
-size = 3000, iter = 1/6003, curPath = 101234.04, bestPath = 101234.04
-size = 3000, iter = 2/6003, curPath = 101314.37, bestPath = 101234.04
-size = 3000, iter = 3/6003, curPath = 101427.195, bestPath = 101234.04
-size = 3000, iter = 4/6003, curPath = 101478.54, bestPath = 101234.04
