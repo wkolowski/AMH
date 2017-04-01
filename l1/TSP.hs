@@ -5,6 +5,8 @@ module TSP where
 import Data.List
 import Data.Random.Normal
 import Data.Monoid
+import Data.Array.MArray
+import Data.Array.IO
 
 import Control.Monad
 import Control.Concurrent
@@ -281,10 +283,63 @@ ascent n dom = do
 	restart dom = iterM 5 (swap $ size dom) $ curPath dom
 	dom' = dom {curIter = 0}
 
-climbTest = do
-	(size, initPath) <- readInput
+data ArrPath = ArrPath (IOArray Int Vertex) deriving (Eq)
 
-	let p = initPath
+arrPath :: Size -> Path -> IO ArrPath
+arrPath size (Path vs) = liftM ArrPath $ newListArray (1, size) vs
+
+arrSwapNonRand :: ArrPath -> Int -> Int -> IO ()
+arrSwapNonRand (ArrPath p) i j = do
+	pi <- readArray p i
+	pj <- readArray p j
+	writeArray p i pj
+	writeArray p j pi	
+
+arrSwap :: ArrPath -> IO ()
+arrSwap (ArrPath p) = do
+	(lo, hi) <- getBounds p
+	i <- randomRIO (lo + 1, hi)
+	j <- randomRIO (lo + 1, hi)
+	pi <- readArray p i
+	pj <- readArray p j
+	writeArray p i pj
+	writeArray p j pi
+
+arrPathLen :: ArrPath -> IO Float
+arrPathLen (ArrPath p) = do
+	(lo, hi) <- getBounds p
+	vs <- mapM (\i -> readArray p i) [lo..hi]
+	return $ pathLen (Path vs)
+
+arrClimb :: TVar Float -> Domain ArrPath ArrPath -> IO ArrPath
+arrClimb best dom = do
+	bestLen <- arrPathLen $ bestPath dom
+	atomically $ writeTVar best bestLen
+
+	climb' dom where
+
+	climb' dom = do
+		if curIter dom > maxIter dom
+		then return $ bestPath dom
+		else do
+			arrTweak dom
+			--arrSwap $ curPath dom
+			bestLen <- arrPathLen $ bestPath dom
+			newLen <- arrPathLen $ curPath dom
+			when (logging dom && curIter dom `mod` 10 == 0) $ do
+--				hPutStr stderr $ show $ 50 + (curIter dom `div` 10)
+				hPutStrLn stderr $ "size = " ++ (show $ size dom) ++ ", iter = " ++ (show $ curIter dom) ++ "/" ++ (show $ maxIter dom) ++ ", curPath = " ++ (show $ newLen) ++ ", bestPath = " ++ (show $ bestLen)
+			if newLen <= bestLen
+			then do
+				atomically $ writeTVar best newLen
+				let ArrPath arr = curPath dom
+				vs <- getElems arr
+				copy <- arrPath (size dom) $ Path vs
+				climb' $ dom {curIter = curIter dom + 1, bestPath = copy}
+			else do
+				climb' $ dom {curIter = curIter dom + 1}
+
+climbTest size initPath = do
 
 	--m <- randomSearch 50 $ Domain {size = size, curIter = 0, maxIter = 1000, curPath = initPath, bestPath = initPath, logging = True}
 	m <- ascent size $ Domain {size = size, curIter = 0, maxIter = 1000, curPath = initPath, bestPath = [initPath], logging = True}
@@ -318,10 +373,71 @@ climbTest = do
 	
 	return ()
 
+arrTweak :: Tweak ArrPath
+arrTweak dom = do
+	let ap@(ArrPath p) = curPath dom
+	(lo, hi) <- getBounds p
+	oldLen <- arrPathLen ap
+	i <- randomRIO (lo + 1, hi)
+	j <- randomRIO (lo + 1, hi)
+	pi <- readArray p i
+	pj <- readArray p j
+	writeArray p i pj
+	writeArray p j pi
+	newLen <- arrPathLen ap
+	when (newLen > oldLen) $ do
+		writeArray p i pi
+		writeArray p j pj
+	return ap
+	
+arrayTest :: Size -> Path -> IO ArrPath
+arrayTest n initPath = do
+	arp <- arrPath n $ initPath
+	best <- atomically $ newTVar 0
+	forkIO $ logBest best >> return ()
+	arrClimb best $ Domain {size = n, curIter = 0, maxIter = 1000000, curPath = arp, bestPath = arp, logging = True}
+
+neighbour :: Vertex -> Vertex -> Bool
+neighbour (Vertex n1 _ _) (Vertex n2 _ _) = abs (n1 - n2) == 1
+
+lenDiff :: ArrPath -> (Int, Int) -> IO Float
+lenDiff (ArrPath ap) (i, j) = do
+	(_, size) <- getBounds ap
+	pi <- readArray ap i
+	pj <- readArray ap j
+	if abs (i - j) == 1
+	then do
+		pi_prev <- readArray ap (i - 1)
+		pj_next <- readArray ap (j `mod` size + 1)
+		
+		let	i_old_prev = dist pi pi_prev
+			j_old_next = dist pj pj_next
+
+			i_new_next = dist pi pj_next
+			j_new_prev = dist pj pi_prev
+		
+		return $ i_new_next + j_new_prev - i_old_prev - j_old_next
+	else do
+		pi_prev <- readArray ap (i - 1)
+		pi_next <- readArray ap (i `mod` size + 1)
+		pj_prev <- readArray ap (j - 1)
+		pj_next <- readArray ap (j `mod` size + 1)
+		let	i_old_prev = dist pi pi_prev
+			i_old_next = dist pi pi_next
+			j_old_prev = dist pj pj_prev
+			j_old_next = dist pj pj_next
+		
+			i_new_prev = dist pi pj_prev
+			i_new_next = dist pi pj_next
+			j_new_prev = dist pj pi_prev
+			j_new_next = dist pj pi_next
+		return $ i_new_prev + i_new_next + j_new_prev + j_new_next - (i_old_prev + i_old_next + j_old_prev + j_old_next)
 main = do
 	(size, initPath) <- readInput
-	putStrLn $ replicate 50 '=' ++ "greedy" ++ replicate 50 '='
-	greedyTest size initPath greedy
+	--climbTest size initPath
+	arrayTest size initPath
+	--putStrLn $ replicate 50 '=' ++ "greedy" ++ replicate 50 '='
+	--greedyTest size initPath greedy
 	{-putStrLn $ replicate 50 '=' ++ "greedy2" ++ replicate 50 '='
 	greedyTest size initPath greedy2
 	putStrLn $ replicate 50 '=' ++ "greedy3" ++ replicate 50 '='
