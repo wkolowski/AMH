@@ -8,13 +8,13 @@ function readData(filename::String)
 	open(filename) do file
 		lines = readlines(file)
 		name = strip(lines[1])
-		for line in lines[2:end]
+		for line in lines[1:end]
 			push!(len, parse(Float64, strip(line)))
 		end
 	end
 
 
-	df = DataFrame(time = 1:length(len), length = len, label = filename)
+	df = DataFrame(time = 0:length(len) - 1, length = len, label = filename)
 	return df, name
 end
 
@@ -25,7 +25,7 @@ end
 function readAndPlot(filename::String)
 	df, _ = readData(filename)
 	graph(df, filename)
-	run(`./conv.sh`)
+	run(`../conv.sh`)
 end
 
 function contraPlot(filename1::String, filename2::String)
@@ -33,7 +33,7 @@ function contraPlot(filename1::String, filename2::String)
 	df2, _ = readData(filename2)
 	df = vcat(df1, df2)
 	graph(df, filename1 * "_" * filename2)
-	run(`./conv.sh`)
+	run(`../conv.sh`)
 end
 
 
