@@ -146,6 +146,11 @@ arrTweak3 numOfSwaps dom = do
 		writeArray p j pi
 	return ap
 
+arrTweak4 :: Int -> Tweak ArrPath
+arrTweak4 numOfSwaps dom = arrTweak2 (numOfSwaps * 2 ^ ((curIter dom `div` 10000) `mod` 3)) dom {-if curIter dom `mod` 10000 == 0
+	then arrTweak4 (2 * numOfSwaps) $ dom {curIter = curIter dom + 1}
+	else arrTweak2 numOfSwaps dom-}
+
 arrRestart :: Float -> Int -> Restart ArrPath
 arrRestart threshold numOfSwaps dom = do
 	r <- normalIO' (0.0, 1.0) :: IO Float
@@ -183,12 +188,13 @@ arrayTest numOfSwaps tweakSize ap = do
 	bestLen <- arrPathLen ap
 	channel <- atomically $ newTVar bestLen
 	forkIO $ logBest channel
-	arrClimb channel (arrTweak2 tweakSize) noRestart $ Domain {size = size, curIter = 0, maxIter = 10000000, curPath = ap, bestPath = bestLen, logging = True}
+	arrClimb channel (arrTweak4 tweakSize) noRestart $ Domain {size = size, curIter = 0, maxIter = 10000000, curPath = ap, bestPath = bestLen, logging = True}
 	return ()
 
 
 --main = arrayTest 0 50 <$> readArrPath
 
 main = do
+	--ap <- greedyArrPath
 	ap <- readArrPath
-	arrayTest 0 250 ap
+	arrayTest 0 50 ap
