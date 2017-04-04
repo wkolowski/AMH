@@ -1,9 +1,11 @@
 {-# LANGUAGE RankNTypes #-}
-module Arr where
+module Main where
 
 import Data.Array.MArray
 import Data.Array.IO
 import Data.Random.Normal
+
+-- import Control.Applicative
 
 import Control.Monad
 import Control.Concurrent
@@ -13,6 +15,7 @@ import System.IO
 import System.Random
 
 import TSP
+import Greedy
 
 data ArrPath = ArrPath (IOArray Int Vertex) deriving Eq
 
@@ -21,19 +24,32 @@ mkArrPath size (Path vs)
 	| size <= 0 = error "Size can't be less than 0."
 	| otherwise = liftM ArrPath $ newListArray (1, size) vs
 
+getSize :: ArrPath -> IO Size
+getSize ap@(ArrPath p) = liftM snd $ getBounds p
+
+readArrPath :: IO ArrPath
+readArrPath = do
+	(size, p) <- readInput
+	mkArrPath size p
+
+greedyArrPath :: IO ArrPath
+greedyArrPath = do
+	(size, p) <- readInput
+	mkArrPath size $ greedy p
+
 arrSwap :: ArrPath -> Int -> Int -> IO ()
 arrSwap (ArrPath p) i j = do
 	pi <- readArray p i
 	pj <- readArray p j
 	writeArray p i pj
-	writeArray p j pi	
+	writeArray p j pi
 
 arrSwapRnd :: ArrPath -> IO ()
 arrSwapRnd ap@(ArrPath p) = do
 	(lo, hi) <- getBounds p
 	i <- randomRIO (lo + 1, hi)
 	j <- randomRIO (lo + 1, hi)
-	arrSwap ap i j 
+	arrSwap ap i j
 
 arrPathLen :: ArrPath -> IO Float
 arrPathLen (ArrPath p) = do
@@ -114,7 +130,7 @@ arrTweak3 numOfSwaps dom = do
 	let ap@(ArrPath p) = curPath dom
 	(lo, hi) <- getBounds p
 	oldLen <- arrPathLen ap
-	swaps <- replicateM numOfSwaps $ do --(25 + curIter dom `div` 1000) $ do
+	swaps <- replicateM numOfSwaps $ do
 		i <- randomRIO (lo + 1, hi)
 		j <- randomRIO (lo + 1, hi)
 		return (i, j)
@@ -123,7 +139,6 @@ arrTweak3 numOfSwaps dom = do
 		len' <- lenDiff ap i' j'
 		return $ if len < len' then (i, j) else (i', j')) (head swaps) (tail swaps)
 	diff <- lenDiff ap i j
-	hPutStrLn stderr $ "Diff between " ++ (show i) ++ " and " ++ (show j) ++ " is " ++ show diff
 	when (diff < 50.0) $ do
 		pi <- readArray p i
 		pj <- readArray p j
@@ -131,33 +146,27 @@ arrTweak3 numOfSwaps dom = do
 		writeArray p j pi
 	return ap
 
-arrRestart :: Float -> Restart ArrPath
-arrRestart threshold dom = do
+arrRestart :: Float -> Int -> Restart ArrPath
+arrRestart threshold numOfSwaps dom = do
 	r <- normalIO' (0.0, 1.0) :: IO Float
-	putStrLn $ show r
 	when (r > threshold) $ do
-		replicateM_ (size dom) (arrSwapRnd $ curPath dom)
+		replicateM_ numOfSwaps (arrSwapRnd $ curPath dom)
 	return $ curPath dom
 
-arrClimb :: TVar Float -> Tweak ArrPath -> Restart ArrPath -> Domain ArrPath Float -> IO Float
+arrClimb :: TVar Float -> Tweak ArrPath -> Restart ArrPath -> Domain ArrPath Float -> IO ()
 arrClimb best tweak restart dom = do
 	let bestLen = bestPath dom
-	--atomically $ writeTVar best bestLen
 
 	climb' dom where
 
 	climb' dom = do
 		if curIter dom > maxIter dom
-		then return $ bestPath dom
+		then return () -- $ bestPath dom
 		else do
-			--restart dom -- this also includes a check whether a restart should be performed
+			restart dom
 			let bestLen = bestPath dom
-			--curLen <- arrPathLen $ curPath dom
-			tweak dom --arrTweak2 tweakSize dom
+			tweak dom
 			newLen <- arrPathLen $ curPath dom
-			--putStrLn $ "WUT"
-			hFlush stdout
-			hFlush stderr
 			when (logging dom && curIter dom `mod` 10 == 0) $ do
 				hPutStrLn stderr $ "size = " ++ (show $ size dom) ++ ", iter = " ++ (show $ curIter dom) ++ "/" ++ (show $ maxIter dom) ++ ", curPath = " ++ (show $ newLen) ++ ", bestPath = " ++ (show $ bestLen)
 			if newLen <= bestLen
@@ -167,19 +176,19 @@ arrClimb best tweak restart dom = do
 			else do
 				climb' $ dom {curIter = curIter dom + 1}
 
-
-arrayTest :: Int -> Int -> Size -> Path -> IO ()
-arrayTest numOfSwaps tweakSize size initPath = do
-	p <- iterM numOfSwaps (swap size) $ initPath
-	arp <- mkArrPath size initPath
-	bestLen <- arrPathLen arp
-	best <- atomically $ newTVar bestLen
-	forkIO $ logBest best >> return ()
-	arrClimb best (arrRestart 1.9) (arrTweak3 tweakSize) $ Domain {size = size, curIter = 0, maxIter = 50000, curPath = arp, bestPath = bestLen, logging = True}
+arrayTest :: Int -> Int -> ArrPath -> IO ()
+arrayTest numOfSwaps tweakSize ap = do
+	replicateM_ numOfSwaps (arrSwapRnd ap)
+	size <- getSize ap
+	bestLen <- arrPathLen ap
+	channel <- atomically $ newTVar bestLen
+	forkIO $ logBest channel
+	arrClimb channel (arrTweak2 tweakSize) noRestart $ Domain {size = size, curIter = 0, maxIter = 10000000, curPath = ap, bestPath = bestLen, logging = True}
 	return ()
 
 
+--main = arrayTest 0 50 <$> readArrPath
+
 main = do
-	(size, initPath) <- readInput
-	--climbTest size initPath
-	arrayTest 5 25 size initPath
+	ap <- readArrPath
+	arrayTest 0 250 ap

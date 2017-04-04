@@ -36,4 +36,16 @@ function contraPlot(filename1::String, filename2::String)
 	run(`../conv.sh`)
 end
 
+function plotAll(filenames)
+	df1, _ = readData(filenames[1])
+	df2, _ = readData(filenames[2])
+	df = vcat(df1, df2)
+	for filename in filenames[3:end]
+		df_new, _ = readData(filename)
+		df = vcat(df, df_new)
+	end
+	graph(df, "allPlot")
+	run(`../conv.sh`)
+end
+
 
