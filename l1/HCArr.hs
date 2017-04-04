@@ -1,5 +1,5 @@
 {-# LANGUAGE RankNTypes #-}
-module Main where
+module HCArr where
 
 import Data.Array.MArray
 import Data.Array.IO
@@ -194,7 +194,7 @@ arrayTest numOfSwaps tweakSize ap = do
 
 --main = arrayTest 0 50 <$> readArrPath
 
-main = do
+{-main = do
 	--ap <- greedyArrPath
 	ap <- readArrPath
-	arrayTest 0 50 ap
+	arrayTest 0 50 ap-}
