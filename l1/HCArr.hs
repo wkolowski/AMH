@@ -37,6 +37,11 @@ greedyArrPath = do
 	(size, p) <- readInput
 	mkArrPath size $ greedy p
 
+readArrPathFromFile :: String -> IO ArrPath
+readArrPathFromFile file = do
+	(size, p) <- readInputFromFile file
+	mkArrPath size p
+
 arrSwap :: ArrPath -> Int -> Int -> IO ()
 arrSwap (ArrPath p) i j = do
 	pi <- readArray p i
