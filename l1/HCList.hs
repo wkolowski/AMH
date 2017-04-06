@@ -1,5 +1,7 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RankNTypes #-}
-module Lists where
+
+module HCList where
 
 import Data.Random.Normal
 
@@ -11,6 +13,52 @@ import System.IO
 import System.Random
 
 import TSP
+
+newtype Path = Path [Vertex] --deriving Eq
+
+instance Show Path where
+	show (Path vs) = show vs
+
+pathLen :: Path -> Float
+pathLen (Path vs) = len vs
+
+instance Eq Path where
+	p == p' = pathLen p == pathLen p'
+
+-- Paths are ordered by their length.
+instance Ord Path where
+	compare vs1 vs2 = compare (pathLen vs1) (pathLen vs2)
+
+-- Hill Climbing.
+
+data Domain a b = Domain
+	{ size :: Size
+	, curIter :: Int
+	, maxIter :: Int
+	, curPath :: a
+	, bestPath :: b
+	, logging :: Bool
+	}
+
+instance Show (Domain Path Path) where
+	show dom = "size = " ++ (show $ size dom) ++ ", iter = " ++ (show $ curIter dom) ++ "/" ++ (show $ maxIter dom) ++ ", curPath = " ++ (show $ pathLen $ curPath dom) ++ ", bestPath = " ++ (show $ pathLen $ bestPath dom)
+
+instance Show (Domain Path [Path]) where
+	show dom = "size = " ++ (show $ size dom) ++ ", iter = " ++ (show $ curIter dom) ++ "/" ++ (show $ maxIter dom) ++ ", curPath = " ++ (show $ pathLen $ curPath dom) ++ ", bestPath = " ++ (show $ pathLen $ head $ bestPath dom)
+
+type Init a b = IO (a, b)
+type Tweak a = forall b. Domain a b -> IO a
+type Select a = forall b. Domain a b -> a -> a
+type Restart a = forall b. Domain a b -> IO a
+
+replace :: Select a
+replace _ new = new
+
+keep :: Select a
+keep dom _ = curPath dom
+
+noRestart :: Restart a
+noRestart dom = return $ curPath dom
 
 -- Swap elements at positions i and j in the given list.
 swapElementsAt :: Int -> Int -> [a] -> [a]

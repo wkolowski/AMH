@@ -3,6 +3,17 @@ module Greedy where
 import Data.List
 
 import TSP
+import HCList
+
+greedyV :: [Vertex] -> [Vertex]
+greedyV [] = []
+greedyV [x] = [x]
+greedyV (v:vs) =  case vs of
+	[] -> []
+	_ ->
+		let	!next = vs $> sortBy (\x y -> compare (dist v x) (dist v y)) $> head
+			!rest = greedyV $ next : delete next vs
+		in v : rest
 
 greedy :: Path -> Path
 greedy (Path []) = error "LOLWUT empty list"

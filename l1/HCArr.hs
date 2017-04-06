@@ -1,13 +1,13 @@
 {-# LANGUAGE RankNTypes #-}
-module HCArr where
+module Main where
 
 import Data.Array.MArray
 import Data.Array.IO
 import Data.Random.Normal
 
--- import Control.Applicative
-
 import Control.Monad
+import Control.Monad.Trans
+import Control.Monad.State
 import Control.Concurrent
 import Control.Concurrent.STM
 
@@ -19,8 +19,8 @@ import Greedy
 
 data ArrPath = ArrPath (IOArray Int Vertex) deriving Eq
 
-mkArrPath :: Size -> Path -> IO ArrPath
-mkArrPath size (Path vs)
+mkArrPath :: Size -> [Vertex] -> IO ArrPath
+mkArrPath size vs
 	| size <= 0 = error "Size can't be less than 0."
 	| otherwise = liftM ArrPath $ newListArray (1, size) vs
 
@@ -29,18 +29,18 @@ getSize ap@(ArrPath p) = liftM snd $ getBounds p
 
 readArrPath :: IO ArrPath
 readArrPath = do
-	(size, p) <- readInput
-	mkArrPath size p
+	(size, vs) <- readInput
+	mkArrPath size vs
 
 greedyArrPath :: IO ArrPath
 greedyArrPath = do
-	(size, p) <- readInput
-	mkArrPath size $ greedy p
+	(size, vs) <- readInput
+	mkArrPath size $ greedyV vs
 
 readArrPathFromFile :: String -> IO ArrPath
 readArrPathFromFile file = do
-	(size, p) <- readInputFromFile file
-	mkArrPath size p
+	(size, vs) <- readInputFromFile file
+	mkArrPath size vs
 
 arrSwap :: ArrPath -> Int -> Int -> IO ()
 arrSwap (ArrPath p) i j = do
@@ -60,7 +60,7 @@ arrPathLen :: ArrPath -> IO Float
 arrPathLen (ArrPath p) = do
 	(lo, hi) <- getBounds p
 	vs <- mapM (\i -> readArray p i) [lo..hi]
-	return $ pathLen (Path vs)
+	return $ len vs
 
 lenDiff :: ArrPath -> Int -> Int -> IO Float
 lenDiff ap i j = lenDiff' ap (min i j) (max i j)
@@ -93,113 +93,104 @@ lenDiff' (ArrPath ap) i j = do
 	else
 		return $ i_new_prev + i_new_next + j_new_prev + j_new_next - (i_old_prev + i_old_next + j_old_prev + j_old_next)
 
-arrTweak :: Tweak ArrPath
-arrTweak dom = do
-	let ap@(ArrPath p) = curPath dom
-	(lo, hi) <- getBounds p
-	oldLen <- arrPathLen ap
-	i <- randomRIO (lo + 1, hi)
-	j <- randomRIO (lo + 1, hi)
-	pi <- readArray p i
-	pj <- readArray p j
-	writeArray p i pj
-	writeArray p j pi
-	newLen <- arrPathLen ap
-	when (newLen > oldLen) $ do
-		writeArray p i pi
-		writeArray p j pj
-	return ap
 
-arrTweak2 :: Int -> Tweak ArrPath
-arrTweak2 numOfSwaps dom = do
-	let ap@(ArrPath p) = curPath dom
-	(lo, hi) <- getBounds p
-	oldLen <- arrPathLen ap
-	swaps <- replicateM numOfSwaps $ do --(25 + curIter dom `div` 1000) $ do
-		i <- randomRIO (lo + 1, hi)
-		j <- randomRIO (lo + 1, hi)
-		return (i, j)
-	(i, j) <- foldM (\(i, j) (i', j') -> do
-		len <- lenDiff ap i j
-		len' <- lenDiff ap i' j'
-		return $ if len < len' then (i, j) else (i', j')) (head swaps) (tail swaps)
-	
-	pi <- readArray p i
-	pj <- readArray p j
-	writeArray p i pj
-	writeArray p j pi
-	return ap
+data Config = Config
+	{ numOfIter :: Int
+	, swapsPerIter :: Int
+	, restartThreshold :: Float
+	, swapsPerRestart :: Int
+	, chanel :: TVar Float
+	, logging :: Bool
+	}
 
-arrTweak3 :: Int -> Tweak ArrPath
-arrTweak3 numOfSwaps dom = do
-	let ap@(ArrPath p) = curPath dom
-	(lo, hi) <- getBounds p
-	oldLen <- arrPathLen ap
-	swaps <- replicateM numOfSwaps $ do
-		i <- randomRIO (lo + 1, hi)
-		j <- randomRIO (lo + 1, hi)
-		return (i, j)
-	(i, j) <- foldM (\(i, j) (i', j') -> do
-		len <- lenDiff ap i j
-		len' <- lenDiff ap i' j'
-		return $ if len < len' then (i, j) else (i', j')) (head swaps) (tail swaps)
-	diff <- lenDiff ap i j
-	when (diff < 50.0) $ do
-		pi <- readArray p i
-		pj <- readArray p j
-		writeArray p i pj
-		writeArray p j pi
-	return ap
+data ClimbState = ClimbState
+	{ curIter :: Int
+	, maxIter :: Int
+	, cur :: ArrPath
+	, curLen :: Float
+	, bestLen :: Float
+	}
 
-arrTweak4 :: Int -> Tweak ArrPath
-arrTweak4 numOfSwaps dom = arrTweak2 (numOfSwaps * 2 ^ ((curIter dom `div` 10000) `mod` 3)) dom {-if curIter dom `mod` 10000 == 0
-	then arrTweak4 (2 * numOfSwaps) $ dom {curIter = curIter dom + 1}
-	else arrTweak2 numOfSwaps dom-}
+checkEnd :: StateT ClimbState IO Bool
+checkEnd = do
+	st <- get
+	return $ curIter st > maxIter st
+{-StateT $ \st -> return $ (curIter st > maxIter st, st)-}
 
-arrRestart :: Float -> Int -> Restart ArrPath
-arrRestart threshold numOfSwaps dom = do
-	r <- normalIO' (0.0, 1.0) :: IO Float
-	when (r > threshold) $ do
-		replicateM_ numOfSwaps (arrSwapRnd $ curPath dom)
-	return $ curPath dom
+type Init2 a = IO a
+type Tweak2 = StateT ClimbState IO Float
+type Restart2 = StateT ClimbState IO ()
+type Log = StateT ClimbState IO ()
 
-arrClimb :: TVar Float -> Tweak ArrPath -> Restart ArrPath -> Domain ArrPath Float -> IO ()
-arrClimb best tweak restart dom = do
-	let bestLen = bestPath dom
+arrClimb :: Init2 ArrPath -> Tweak2 -> Restart2 -> Log -> Config -> IO ()
+arrClimb init tweak restart log cfg = do
+	initPath <- init
+	len <- arrPathLen initPath
 
-	climb' dom where
+	atomically $ writeTVar (chanel cfg) len
 
-	climb' dom = do
-		if curIter dom > maxIter dom
-		then return () -- $ bestPath dom
+	evalStateT climb $ ClimbState {curIter = 0, maxIter = numOfIter cfg, cur = initPath, curLen = len, bestLen = len} where
+
+	climb :: StateT ClimbState IO ()
+	climb = do
+		end <- checkEnd
+		if end
+		then return ()
 		else do
-			restart dom
-			let bestLen = bestPath dom
-			tweak dom
-			newLen <- arrPathLen $ curPath dom
-			when (logging dom && curIter dom `mod` 10 == 0) $ do
-				hPutStrLn stderr $ "size = " ++ (show $ size dom) ++ ", iter = " ++ (show $ curIter dom) ++ "/" ++ (show $ maxIter dom) ++ ", curPath = " ++ (show $ newLen) ++ ", bestPath = " ++ (show $ bestLen)
-			if newLen <= bestLen
-			then do
-				atomically $ writeTVar best newLen
-				climb' $ dom {curIter = curIter dom + 1, bestPath = newLen}
-			else do
-				climb' $ dom {curIter = curIter dom + 1}
+			st <- get
+			restart
+			diff <- tweak
+			log
+			lift $ when (curLen st + diff < bestLen st) $ do
+				atomically $ writeTVar (chanel cfg) $ curLen st + diff
+			modify $ \st -> st {curIter = curIter st + 1, curLen = curLen st + diff, bestLen = min (bestLen st) (curLen st + diff)}
+			climb
 
-arrayTest :: Int -> Int -> ArrPath -> IO ()
-arrayTest numOfSwaps tweakSize ap = do
-	replicateM_ numOfSwaps (arrSwapRnd ap)
-	size <- getSize ap
-	bestLen <- arrPathLen ap
-	channel <- atomically $ newTVar bestLen
-	forkIO $ logBest channel
-	arrClimb channel (arrTweak4 tweakSize) noRestart $ Domain {size = size, curIter = 0, maxIter = 10000000, curPath = ap, bestPath = bestLen, logging = True}
-	return ()
+newArrTweak :: Int -> Tweak2
+newArrTweak swapsPerIter = do
+	st <- get
+	let ap@(ArrPath p) = cur st
+	(lo, hi) <- lift $ getBounds p
+	swaps <- lift $ replicateM swapsPerIter $ do
+		i <- randomRIO (lo + 1, hi)
+		j <- randomRIO (lo + 1, hi)
+		return (i, j)
+	(i, j) <- lift $ foldM (\(i, j) (i', j') -> do
+		len <- lenDiff ap i j
+		len' <- lenDiff ap i' j'
+		return $ if len < len' then (i, j) else (i', j')) (head swaps) (tail swaps)
+	diff <- lift $ lenDiff ap i j
+	lift $ arrSwap ap i j
+	lift $ return diff
 
+progressiveTweak :: Int -> Tweak2
+progressiveTweak swapsPerIter = do
+	st <- get
+	newArrTweak $ floor $ fromIntegral swapsPerIter * (1.5 ^ (curIter st `div` 25000))
 
---main = arrayTest 0 50 <$> readArrPath
+newNoRestart :: Restart2
+newNoRestart = lift $ return ()
 
-{-main = do
-	--ap <- greedyArrPath
-	ap <- readArrPath
-	arrayTest 0 50 ap-}
+logStateToStdErr :: Log
+logStateToStdErr = do
+	st <- get
+	lift $ when (curIter st `mod` 10 == 0) $ do
+		hPutStrLn stderr $ "iter = " ++ (show $ curIter st) ++ "/" ++ (show $ maxIter st) ++ ", curLen = " ++ (show $ curLen st) ++ ", bestLen = " ++ (show $ bestLen st)
+
+arrayTest :: IO ()
+arrayTest = do
+	let	init = readArrPath
+
+	chanel <- atomically $ newTVar 0.0
+	forkIO $ TSP.logBest chanel
+
+	Main.arrClimb init (progressiveTweak 25) newNoRestart logStateToStdErr $ Config
+		{ numOfIter = 10^6
+		, swapsPerIter = 42
+		, restartThreshold = 2.0
+		, swapsPerRestart = 5
+		, chanel = chanel
+		, logging = True
+		}
+
+main = Main.arrayTest

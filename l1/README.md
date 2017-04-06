@@ -21,7 +21,4 @@ A quite large dataset with various problem sizes and known optima is the [TSPLIB
 The Hill Climbing algorithms uses STM to log the best solution each second. There's some Julia code that can then draw some nice graphs using this data.
 
 ### TODO
-
-1. The array version of Hill Climbing is not yet fully implemented.
-2. The Hill Climbing's condig got conflated with its state. This should be refactored.
-3. I should implement Tabu Search.
+3. Implement some form of Tabu Search.

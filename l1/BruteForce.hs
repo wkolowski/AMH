@@ -4,6 +4,7 @@ import Data.List
 import Control.Monad
 
 import TSP
+import HCList
 
 pathPerms :: Path -> [Path]
 pathPerms (Path []) = [Path []]
@@ -18,5 +19,5 @@ bruteForce' p = foldM (\p best -> if p < best && p /= best then do putStrLn $ "F
 bruteForceTest :: IO ()
 bruteForceTest = do
 	(size, initPath) <- readInput
-	let m = bruteForce initPath
+	let m = bruteForce $ Path initPath
 	putStrLn $ "Best solution is " ++ (show m) ++ ", its distance is " ++ (show $ pathLen m)
