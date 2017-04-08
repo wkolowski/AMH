@@ -122,6 +122,7 @@ data ClimbState = ClimbState
 	, curLens :: [Double]
 	, bestLen :: Double
 	, bestLens :: [Double]
+	, tabu :: [Int]
 	}
 
 type Init a = IO a
@@ -137,7 +138,16 @@ climb init checkEnd tweak restart log cfg = do
 
 	atomically $ writeTVar (chanel cfg) len
 
-	evalStateT climb' $ ClimbState {curIter = 0, maxIter = numOfIter cfg, cur = initPath, curLen = len, curLens = [len], bestLen = len, bestLens = [len]} where
+	evalStateT climb' $ ClimbState
+		{ curIter = 0
+		, maxIter = numOfIter cfg
+		, cur = initPath
+		, curLen = len
+		, curLens = [len]
+		, bestLen = len
+		, bestLens = [len]
+		, tabu = []
+		} where
 
 	climb' :: StateT ClimbState IO ()
 	climb' = do
@@ -176,6 +186,13 @@ divergingEnd initialIters n threshold = do
 	then return False
 	else return $ head (curLens st) - curLens st !! n > threshold
 
+generateSamples :: ArrPath -> Int -> StateT ClimbState IO [(Int, Int)]
+generateSamples ap n = do
+	(lo, hi) <- lift $ getBounds ap
+	lift $ replicateM n $ do
+		i <- randomRIO (lo + 1, hi)
+		j <- randomRIO (lo + 1, hi)
+		return (i, j)
 
 simpleTweak :: Int -> Tweak
 simpleTweak swapsPerIter = do
@@ -194,10 +211,64 @@ simpleTweak swapsPerIter = do
 	lift $ arrSwap ap i j
 	lift $ return diff
 
+simpleTweak' :: Int -> Tweak
+simpleTweak' numOfSamples = do
+	st <- get
+	let ap = cur st
+	(lo, hi) <- lift $ getBounds ap
+	swaps <- lift $ replicateM numOfSamples $ do
+		i <- randomRIO (lo + 1, hi)
+		j <- randomRIO (lo + 1, hi)
+		return (i, j)
+	swaps' <- lift $ sequence $ map (\(i, j) -> do
+		l <- lenDiff ap i j
+		return (i, j, l)) swaps
+	let swaps'' = swaps' $> filter (\(i, j, _) -> i /= j)
+	if swaps'' == []
+	then lift $ return 0.0
+	else do
+		let (i, j, diff) = swaps'' $> minimumBy (\(_, _, l) (_, _, l') -> compare l l')
+		lift $ arrSwap ap i j
+		lift $ return diff
+
+fastTweak :: Int -> Tweak
+fastTweak numOfSamples = do
+	ap <- liftM cur get
+	samples <- generateSamples ap numOfSamples
+	diff <- lift $ foldM (\p (i, j) -> do
+		len <- lenDiff ap i j
+		if len < 0.0
+		then do
+			arrSwap ap i j
+			return $ len + p
+		else return p) 0.0 samples
+	return diff
+	if diff < 0.0
+	then return diff
+	else simpleTweak' numOfSamples
+
 progressiveTweak :: Int -> Tweak
 progressiveTweak swapsPerIter = do
 	st <- get
 	simpleTweak $ floor $ fromIntegral swapsPerIter * (1.5 ^ (curIter st `div` 25000))
+
+newTabuTweak :: Int -> Int -> Tweak
+newTabuTweak numOfSamples tabuSize = do
+	st <- get
+	let ap = cur st
+	(lo, hi) <- lift $ getBounds ap
+	swaps <- lift $ replicateM numOfSamples $ do
+		i <- randomRIO (lo + 1, hi)
+		j <- randomRIO (lo + 1, hi)
+		return (i, j)
+	swaps' <- lift $ sequence $ map (\(i, j) -> do
+		l <- lenDiff ap i j
+		return (i, j, l)) swaps
+	let swaps'' = swaps' $> filter (\(i, j, l) -> i /= j && (l < 25.0 || (i `notElem` take tabuSize (tabu st) && j `notElem` take tabuSize (tabu st))))
+	let (i, j, diff) = swaps'' $> minimumBy (\(_, _, l) (_, _, l') -> compare l l')
+	lift $ arrSwap ap i j
+	modify $ \st -> st {tabu = i : j : take (tabuSize - 2) (tabu st)}
+	lift $ return diff
 
 noRestart :: Restart
 noRestart = lift $ return ()
@@ -210,18 +281,21 @@ randomRestart threshold numOfSwaps = do
 		replicateM_ numOfSwaps (arrSwapRnd $ cur st)
 	return ()
 
+noLogging :: Log
+noLogging = return ()
+
 logStateToStdErr :: Log
 logStateToStdErr = do
 	st <- get
 	lift $ when (curIter st `mod` 100 == 0) $ do
-		hPutStrLn stderr $ "iter = " ++ (show $ curIter st) ++ "/" ++ (show $ maxIter st) ++ ", curLen = " ++ (show $ curLen st) ++ ", bestLen = " ++ (show $ bestLen st)
+		hPutStrLn stderr $ "iter = " ++ (show $ curIter st) ++ "/" ++ (show $ maxIter st) ++ ", curLen = " ++ (show $ curLen st) ++ ", bestLen = " ++ (show $ bestLen st) -- ++ ", tabu = " ++ (show $ take 20 (tabu st))
 
 arrayTest :: IO ()
 arrayTest = do
 	chanel <- atomically $ newTVar 0.0
 	forkIO $ TSP.logBest chanel
 
-	climb greedyArrPath (divergingEnd 100000 1000 100.0) (progressiveTweak 25) noRestart logStateToStdErr $ Config
+	climb randomArrPath (divergingEnd 500000 1000 100.0) (fastTweak 500) noRestart logStateToStdErr $ Config
 		{ numOfIter = 10^5
 		, swapsPerIter = 42
 		, restartThreshold = 2.0
