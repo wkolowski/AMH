@@ -67,10 +67,12 @@ len vs = dist (head vs) (last vs) + pathLen' vs
 		pathLen' [_] = 0.0
 		pathLen' (v1:v2:vs) = dist v1 v2 + pathLen' (v2:vs)
 
-iterM :: (Monad m) => Int -> (a -> m a) -> (a -> m a)
-iterM 0 _ = return
-iterM 1 f = f
-iterM n f = f >=> iterM (n - 1) f
+greedy :: [Vertex] -> [Vertex]
+greedy [] = []
+greedy [v] = [v]
+greedy (v:vs) = v : rest where
+	!next = vs $> minimumBy (\x y -> compare (dist v x) (dist v y))
+	!rest = greedy $ next : delete next vs
 
 sleepMs :: Int -> IO ()
 sleepMs n = threadDelay (n * 1000)
@@ -81,3 +83,8 @@ logBest best = forever $ do
 	putStrLn $ show len
 	sleepMs 1000
 	return ()
+
+iterM :: (Monad m) => Int -> (a -> m a) -> (a -> m a)
+iterM 0 _ = return
+iterM 1 f = f
+iterM n f = f >=> iterM (n - 1) f

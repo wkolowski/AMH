@@ -35,7 +35,7 @@ readArrPath = do
 greedyArrPath :: IO ArrPath
 greedyArrPath = do
 	(size, vs) <- readInput
-	mkArrPath size $ greedyV vs
+	mkArrPath size $ greedy vs
 
 randomArrPath :: IO ArrPath
 randomArrPath = do
@@ -152,16 +152,16 @@ arrClimb init tweak restart log cfg = do
 		then return ()
 		else do
 			st <- get
-			restart
+			--restart
 			diff <- tweak
 			--lift $ hPutStrLn stderr $ show diff
 			log
 			lift $ when (curLen st + diff < bestLen st) $ do
 				atomically $ writeTVar (chanel cfg) $ curLen st + diff
 			modify $ \st -> st {curIter = curIter st + 1, curLen = curLen st + diff, bestLen = min (bestLen st) (curLen st + diff)}
-			newLen <- lift $ arrPathLen $ cur st
+			{-newLen <- lift $ arrPathLen $ cur st
 			lift $ when (abs (newLen - curLen st - diff) > 1e-5) $ do
-				error $ "newLen = " ++ (show newLen) ++ ", curLen = " ++ (show $ curLen st) ++ ", diff = " ++ (show diff) ++ ", curLen + diff = " ++ (show $ curLen st + diff)
+				error $ "newLen = " ++ (show newLen) ++ ", curLen = " ++ (show $ curLen st) ++ ", diff = " ++ (show diff) ++ ", curLen + diff = " ++ (show $ curLen st + diff)-}
 			
 			{-lift $ when (newLen < bestLen st) $ do
 				atomically $ writeTVar (chanel cfg) $ newLen
@@ -257,7 +257,7 @@ smallData = do
 	chanel <- atomically $ newTVar 0.0
 	forkIO $ TSP.logBest chanel
 
-	arrClimb greedyArrPath (newArrTweak 25) newNoRestart logStateToStdErr $ Config
+	arrClimb greedyArrPath (newArrTweak 7500) newNoRestart logStateToStdErr $ Config
 		{ numOfIter = 10^6
 		, swapsPerIter = 42
 		, restartThreshold = 2.0
@@ -270,7 +270,6 @@ smallData = do
 --main = smallData
 
 {-
-	Ulepszyć algorytm zachłanny.
 	Restart jest zbugowany.
 
 -}
