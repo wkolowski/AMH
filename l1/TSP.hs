@@ -22,8 +22,8 @@ type Size = Int
 
 data Vertex = Vertex
 	{ n :: Int
-	, x :: Float
-	, y :: Float
+	, x :: Double
+	, y :: Double
 	} deriving Eq
 
 instance Show Vertex where
@@ -33,8 +33,8 @@ genData :: Size -> FilePath -> IO ()
 genData n path = withFile path WriteMode $ \handle -> do
 	hPutStrLn handle (show n)
 	forM_ [1..n] $ \k -> do
-		x <- randomRIO (1.0, 100.0) :: IO Float
-		y <- randomRIO (1.0, 100.0) :: IO Float
+		x <- randomRIO (1.0, 100.0) :: IO Double
+		y <- randomRIO (1.0, 100.0) :: IO Double
 		hPutStrLn handle $ show k ++ " " ++ show x ++ " " ++ show y
 
 parseInput :: String -> (Size, [Vertex])
@@ -54,12 +54,12 @@ readInputFromFile path = do
 	return $ parseInput str
 
 -- Euclidean distance between two vertices.
-dist :: Vertex -> Vertex -> Float
+dist :: Vertex -> Vertex -> Double
 dist (Vertex _ x1 y1) (Vertex _ x2 y2) = sqrt ((x1 - x2)^2 + (y1 - y2)^2)
 
 -- Path length (sum of distances from each point to the next plus the distance
 -- from the last point to the first).
-len :: [Vertex] -> Float
+len :: [Vertex] -> Double
 len [] = 0.0
 len [_] = 0.0
 len vs = dist (head vs) (last vs) + pathLen' vs
@@ -75,7 +75,7 @@ iterM n f = f >=> iterM (n - 1) f
 sleepMs :: Int -> IO ()
 sleepMs n = threadDelay (n * 1000)
 
-logBest :: TVar Float -> IO ()
+logBest :: TVar Double -> IO ()
 logBest best = forever $ do
 	len <- atomically $ readTVar best
 	putStrLn $ show len

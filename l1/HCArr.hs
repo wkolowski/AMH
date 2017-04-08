@@ -1,5 +1,5 @@
 {-# LANGUAGE RankNTypes #-}
-module Main where
+module HCArr where
 
 import Data.Array.MArray
 import Data.Array.IO
@@ -14,6 +14,8 @@ import Control.Concurrent.STM
 
 import System.IO
 import System.Random
+
+import Test.QuickCheck.Monadic
 
 import TSP
 import Greedy
@@ -69,16 +71,16 @@ arrSwapRnd ap = do
 	j <- randomRIO (lo + 1, hi)
 	arrSwap ap i j
 
-arrPathLen :: ArrPath -> IO Float
+arrPathLen :: ArrPath -> IO Double
 arrPathLen ap = do
 	(lo, hi) <- getBounds ap
 	vs <- mapM (\i -> readArray ap i) [lo..hi]
 	return $ len vs
 
-lenDiff :: ArrPath -> Int -> Int -> IO Float
+lenDiff :: ArrPath -> Int -> Int -> IO Double
 lenDiff ap i j = lenDiff' ap (min i j) (max i j)
 
-lenDiff' :: ArrPath -> Int -> Int -> IO Float
+lenDiff' :: ArrPath -> Int -> Int -> IO Double
 lenDiff' ap i j = do
 	(_, size) <- getBounds ap
 
@@ -109,9 +111,9 @@ lenDiff' ap i j = do
 data Config = Config
 	{ numOfIter :: Int
 	, swapsPerIter :: Int
-	, restartThreshold :: Float
+	, restartThreshold :: Double
 	, swapsPerRestart :: Int
-	, chanel :: TVar Float
+	, chanel :: TVar Double
 	, logging :: Bool
 	}
 
@@ -119,8 +121,8 @@ data ClimbState = ClimbState
 	{ curIter :: Int
 	, maxIter :: Int
 	, cur :: ArrPath
-	, curLen :: Float
-	, bestLen :: Float
+	, curLen :: Double
+	, bestLen :: Double
 	}
 
 checkEnd :: StateT ClimbState IO Bool
@@ -130,7 +132,7 @@ checkEnd = do
 {-StateT $ \st -> return $ (curIter st > maxIter st, st)-}
 
 type Init2 a = IO a
-type Tweak2 = StateT ClimbState IO Float
+type Tweak2 = StateT ClimbState IO Double
 type Restart2 = StateT ClimbState IO ()
 type Log = StateT ClimbState IO ()
 
@@ -152,12 +154,16 @@ arrClimb init tweak restart log cfg = do
 			st <- get
 			restart
 			diff <- tweak
+			--lift $ hPutStrLn stderr $ show diff
 			log
 			lift $ when (curLen st + diff < bestLen st) $ do
 				atomically $ writeTVar (chanel cfg) $ curLen st + diff
 			modify $ \st -> st {curIter = curIter st + 1, curLen = curLen st + diff, bestLen = min (bestLen st) (curLen st + diff)}
-			{-newLen <- lift $ arrPathLen $ cur st
-			lift $ when (newLen < bestLen st) $ do
+			newLen <- lift $ arrPathLen $ cur st
+			lift $ when (abs (newLen - curLen st - diff) > 1e-5) $ do
+				error $ "newLen = " ++ (show newLen) ++ ", curLen = " ++ (show $ curLen st) ++ ", diff = " ++ (show diff) ++ ", curLen + diff = " ++ (show $ curLen st + diff)
+			
+			{-lift $ when (newLen < bestLen st) $ do
 				atomically $ writeTVar (chanel cfg) $ newLen
 			modify $ \st -> st {curIter = curIter st + 1, curLen = newLen, bestLen = min newLen (bestLen st)}-}
 			climb
@@ -184,7 +190,7 @@ progressiveTweak swapsPerIter = do
 	st <- get
 	newArrTweak $ floor $ fromIntegral swapsPerIter * (1.5 ^ (curIter st `div` 25000))
 
-tabuTweak :: Int -> Float -> Tweak2
+tabuTweak :: Int -> Double -> Tweak2
 tabuTweak numOfSamples threshold = do
 	st <- get
 	let ap = cur st
@@ -201,11 +207,11 @@ tabuTweak numOfSamples threshold = do
 	lift $ sequence $ map (\(i, j, _) -> arrSwap ap i j) swaps''
 	return diff
 
-	where	tabu :: [(Int, Int, Float)] -> [(Int, Int, Float)]
+	where	tabu :: [(Int, Int, Double)] -> [(Int, Int, Double)]
 		tabu [] = []
 		tabu (x@(i, j, _):xs) = x : (tabu $ filter (\(i', j', _) -> i == i' || i == j' || j == i' || j == j') xs)
 
-hybridTweak :: Int -> Float -> Tweak2
+hybridTweak :: Int -> Double -> Tweak2
 hybridTweak numOfSamples threshold = do
 	st <- get
 	if curIter st < 50000
@@ -215,10 +221,10 @@ hybridTweak numOfSamples threshold = do
 newNoRestart :: Restart2
 newNoRestart = lift $ return ()
 
-arrRestart :: Float -> Int -> Restart2
+arrRestart :: Double -> Int -> Restart2
 arrRestart threshold numOfSwaps = do
 	st <- get
-	r <- lift $ normalIO' (0.0, 1.0)-- :: IO Float
+	r <- lift $ normalIO' (0.0, 1.0)
 	lift $ when (r > threshold) $ do
 		replicateM_ numOfSwaps (arrSwapRnd $ cur st)
 	return ()
@@ -226,7 +232,7 @@ arrRestart threshold numOfSwaps = do
 logStateToStdErr :: Log
 logStateToStdErr = do
 	st <- get
-	lift $ when (curIter st `mod` 10 == 0) $ do
+	lift $ when (curIter st `mod` 100 == 0) $ do
 		hPutStrLn stderr $ "iter = " ++ (show $ curIter st) ++ "/" ++ (show $ maxIter st) ++ ", curLen = " ++ (show $ curLen st) ++ ", bestLen = " ++ (show $ bestLen st)
 
 arrayTest :: IO ()
@@ -236,7 +242,7 @@ arrayTest = do
 	chanel <- atomically $ newTVar 0.0
 	forkIO $ TSP.logBest chanel
 
-	Main.arrClimb init (hybridTweak 50 100.0) (arrRestart 3.5 10) logStateToStdErr $ Config
+	arrClimb init (hybridTweak 50 100.0) (arrRestart 3.5 10) logStateToStdErr $ Config
 		{ numOfIter = 10^6
 		, swapsPerIter = 42
 		, restartThreshold = 2.0
@@ -251,7 +257,7 @@ smallData = do
 	chanel <- atomically $ newTVar 0.0
 	forkIO $ TSP.logBest chanel
 
-	Main.arrClimb randomArrPath (tabuTweak 25 100.0) (arrRestart 4 5) logStateToStdErr $ Config
+	arrClimb greedyArrPath (newArrTweak 25) newNoRestart logStateToStdErr $ Config
 		{ numOfIter = 10^6
 		, swapsPerIter = 42
 		, restartThreshold = 2.0
@@ -261,10 +267,10 @@ smallData = do
 		}
 	
 
-main = smallData
+--main = smallData
 
 {-
 	Ulepszyć algorytm zachłanny.
-
+	Restart jest zbugowany.
 
 -}

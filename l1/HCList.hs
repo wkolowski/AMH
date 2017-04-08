@@ -19,7 +19,7 @@ newtype Path = Path [Vertex] --deriving Eq
 instance Show Path where
 	show (Path vs) = show vs
 
-pathLen :: Path -> Float
+pathLen :: Path -> Double
 pathLen (Path vs) = len vs
 
 instance Eq Path where
@@ -95,11 +95,11 @@ progressiveBestNeighbour dom = liftM minimum $ replicateM (50 + (curIter dom `di
 normalNeighbour :: Int -> Size -> Tweak Path
 normalNeighbour times size dom = do
 	let stddev = 1 / (fromIntegral size)
-	r <- normalIO' (0.0, 1 + stddev) :: IO Float
+	r <- normalIO' (0.0, 1 + stddev) :: IO Double
 	let n = floor $ 1 + 20 * abs r
 	liftM minimum $ replicateM times $ swap size (curPath dom)
 
-climb :: TVar Float -> Init Path Path -> Tweak Path -> Select Path -> Domain Path Path -> IO Path
+climb :: TVar Double -> Init Path Path -> Tweak Path -> Select Path -> Domain Path Path -> IO Path
 climb best init tweak select dom = do
 	(curPath, bestPath) <- init
 	atomically $ writeTVar best $ pathLen bestPath
@@ -120,7 +120,7 @@ climb best init tweak select dom = do
 			climb' (n + 1) tweak select $ dom {curIter = curIter dom + 1, bestPath = min new $ bestPath dom, curPath = select dom new}
 
 
-climbR :: TVar Float -> Int -> Init Path [Path] -> Tweak Path -> Select Path -> Restart Path -> Domain Path [Path] -> IO Path
+climbR :: TVar Double -> Int -> Init Path [Path] -> Tweak Path -> Select Path -> Restart Path -> Domain Path [Path] -> IO Path
 climbR best n init tweak select restart dom = do
 	(initPath, _) <- init
 	atomically $ writeTVar best $ pathLen $ initPath
