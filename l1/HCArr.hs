@@ -15,10 +15,7 @@ import Control.Concurrent.STM
 import System.IO
 import System.Random
 
-import Test.QuickCheck.Monadic
-
 import TSP
-import Greedy
 
 type ArrPath = IOArray Int Vertex
 
@@ -122,31 +119,28 @@ data ClimbState = ClimbState
 	, maxIter :: Int
 	, cur :: ArrPath
 	, curLen :: Double
+	, curLens :: [Double]
 	, bestLen :: Double
+	, bestLens :: [Double]
 	}
 
-checkEnd :: StateT ClimbState IO Bool
-checkEnd = do
-	st <- get
-	return $ curIter st > maxIter st
-{-StateT $ \st -> return $ (curIter st > maxIter st, st)-}
-
-type Init2 a = IO a
-type Tweak2 = StateT ClimbState IO Double
-type Restart2 = StateT ClimbState IO ()
+type Init a = IO a
+type End = StateT ClimbState IO Bool
+type Tweak = StateT ClimbState IO Double
+type Restart = StateT ClimbState IO ()
 type Log = StateT ClimbState IO ()
 
-arrClimb :: Init2 ArrPath -> Tweak2 -> Restart2 -> Log -> Config -> IO ()
-arrClimb init tweak restart log cfg = do
+climb :: Init ArrPath -> End -> Tweak -> Restart -> Log -> Config -> IO ()
+climb init checkEnd tweak restart log cfg = do
 	initPath <- init
 	len <- arrPathLen initPath
 
 	atomically $ writeTVar (chanel cfg) len
 
-	evalStateT climb $ ClimbState {curIter = 0, maxIter = numOfIter cfg, cur = initPath, curLen = len, bestLen = len} where
+	evalStateT climb' $ ClimbState {curIter = 0, maxIter = numOfIter cfg, cur = initPath, curLen = len, curLens = [len], bestLen = len, bestLens = [len]} where
 
-	climb :: StateT ClimbState IO ()
-	climb = do
+	climb' :: StateT ClimbState IO ()
+	climb' = do
 		end <- checkEnd
 		if end
 		then return ()
@@ -154,22 +148,37 @@ arrClimb init tweak restart log cfg = do
 			st <- get
 			--restart
 			diff <- tweak
-			--lift $ hPutStrLn stderr $ show diff
+			let	new = curLen st + diff
+				best = min (bestLen st) new
 			log
-			lift $ when (curLen st + diff < bestLen st) $ do
-				atomically $ writeTVar (chanel cfg) $ curLen st + diff
-			modify $ \st -> st {curIter = curIter st + 1, curLen = curLen st + diff, bestLen = min (bestLen st) (curLen st + diff)}
-			{-newLen <- lift $ arrPathLen $ cur st
-			lift $ when (abs (newLen - curLen st - diff) > 1e-5) $ do
-				error $ "newLen = " ++ (show newLen) ++ ", curLen = " ++ (show $ curLen st) ++ ", diff = " ++ (show diff) ++ ", curLen + diff = " ++ (show $ curLen st + diff)-}
-			
-			{-lift $ when (newLen < bestLen st) $ do
-				atomically $ writeTVar (chanel cfg) $ newLen
-			modify $ \st -> st {curIter = curIter st + 1, curLen = newLen, bestLen = min newLen (bestLen st)}-}
-			climb
+			lift $ when (new < bestLen st) $ do --(curLen st + diff < bestLen st) $ do
+				atomically $ writeTVar (chanel cfg) $ new --curLen st + diff
+			--modify $ \st -> st {curIter = curIter st + 1, curLen = curLen st + diff, bestLen = min (bestLen st) (curLen st + diff)}
+			modify $ \st -> st {curIter = curIter st + 1, curLen = new, curLens = new : curLens st, bestLen = best, bestLens = best : bestLens st}
+			climb'
 
-newArrTweak :: Int -> Tweak2
-newArrTweak swapsPerIter = do
+enoughIterEnd :: End
+enoughIterEnd = do
+	st <- get
+	return $ curIter st > maxIter st
+
+noImprovementEnd :: Int -> End
+noImprovementEnd threshold = do
+	st <- get
+	if curIter st < threshold
+	then return False
+	else return $ head (bestLens st) == bestLens st !! threshold
+
+divergingEnd :: Int -> Int -> Double -> End
+divergingEnd initialIters n threshold = do
+	st <- get
+	if curIter st < initialIters
+	then return False
+	else return $ head (curLens st) - curLens st !! n > threshold
+
+
+simpleTweak :: Int -> Tweak
+simpleTweak swapsPerIter = do
 	st <- get
 	let ap = cur st
 	(lo, hi) <- lift $ getBounds ap
@@ -185,44 +194,16 @@ newArrTweak swapsPerIter = do
 	lift $ arrSwap ap i j
 	lift $ return diff
 
-progressiveTweak :: Int -> Tweak2
+progressiveTweak :: Int -> Tweak
 progressiveTweak swapsPerIter = do
 	st <- get
-	newArrTweak $ floor $ fromIntegral swapsPerIter * (1.5 ^ (curIter st `div` 25000))
+	simpleTweak $ floor $ fromIntegral swapsPerIter * (1.5 ^ (curIter st `div` 25000))
 
-tabuTweak :: Int -> Double -> Tweak2
-tabuTweak numOfSamples threshold = do
-	st <- get
-	let ap = cur st
-	(lo, hi) <- lift $ getBounds ap
-	swaps <- lift $ replicateM numOfSamples $ do
-		i <- randomRIO (lo + 1, hi)
-		j <- randomRIO (lo + 1, hi)
-		return (i, j)
-	swaps' <- lift $ sequence $ map (\(i, j) -> do
-		l <- lenDiff ap i j
-		return (i, j, l)) swaps
-	let	swaps'' = swaps' $> sortBy (\(_, _, l) (_, _, l') -> compare l l') $> takeWhile (\(_, _, l) -> l < threshold) $> tabu
-		diff = swaps'' $> map (\(_, _, l) -> l) $> sum
-	lift $ sequence $ map (\(i, j, _) -> arrSwap ap i j) swaps''
-	return diff
+noRestart :: Restart
+noRestart = lift $ return ()
 
-	where	tabu :: [(Int, Int, Double)] -> [(Int, Int, Double)]
-		tabu [] = []
-		tabu (x@(i, j, _):xs) = x : (tabu $ filter (\(i', j', _) -> i == i' || i == j' || j == i' || j == j') xs)
-
-hybridTweak :: Int -> Double -> Tweak2
-hybridTweak numOfSamples threshold = do
-	st <- get
-	if curIter st < 50000
-	then tabuTweak numOfSamples threshold
-	else newArrTweak numOfSamples
-
-newNoRestart :: Restart2
-newNoRestart = lift $ return ()
-
-arrRestart :: Double -> Int -> Restart2
-arrRestart threshold numOfSwaps = do
+randomRestart :: Double -> Int -> Restart
+randomRestart threshold numOfSwaps = do
 	st <- get
 	r <- lift $ normalIO' (0.0, 1.0)
 	lift $ when (r > threshold) $ do
@@ -237,28 +218,11 @@ logStateToStdErr = do
 
 arrayTest :: IO ()
 arrayTest = do
-	let	init = readArrPath
-
 	chanel <- atomically $ newTVar 0.0
 	forkIO $ TSP.logBest chanel
 
-	arrClimb init (hybridTweak 50 100.0) (arrRestart 3.5 10) logStateToStdErr $ Config
-		{ numOfIter = 10^6
-		, swapsPerIter = 42
-		, restartThreshold = 2.0
-		, swapsPerRestart = 5
-		, chanel = chanel
-		, logging = True
-		}
-
-smallData :: IO ()
-smallData = do
-
-	chanel <- atomically $ newTVar 0.0
-	forkIO $ TSP.logBest chanel
-
-	arrClimb greedyArrPath (newArrTweak 7500) newNoRestart logStateToStdErr $ Config
-		{ numOfIter = 10^6
+	climb greedyArrPath (divergingEnd 100000 1000 100.0) (progressiveTweak 25) noRestart logStateToStdErr $ Config
+		{ numOfIter = 10^5
 		, swapsPerIter = 42
 		, restartThreshold = 2.0
 		, swapsPerRestart = 5
@@ -271,5 +235,6 @@ smallData = do
 
 {-
 	Restart jest zbugowany.
+	hybridTweak jest zbugowany
 
 -}

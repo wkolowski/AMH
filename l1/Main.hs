@@ -1,7 +1,6 @@
 module Main where
 
 import TSP
-import Greedy
 import HCList
 import HCArr
 
@@ -11,6 +10,6 @@ test_greedy = do
 	let g = greedy vs
 	putStrLn $ "greedy: " ++ (show $ len g)
 
---main = test_greedyV
+--main = test_greedy
 
-main = smallData
+main = arrayTest
