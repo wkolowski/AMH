@@ -186,88 +186,81 @@ divergingEnd initialIters n threshold = do
 	then return False
 	else return $ head (curLens st) - curLens st !! n > threshold
 
-generateSamples :: ArrPath -> Int -> StateT ClimbState IO [(Int, Int)]
-generateSamples ap n = do
+generateSamples' :: ArrPath -> Int -> StateT ClimbState IO [(Int, Int)]
+generateSamples' ap n = do
 	(lo, hi) <- lift $ getBounds ap
-	lift $ replicateM n $ do
-		i <- randomRIO (lo + 1, hi)
-		j <- randomRIO (lo + 1, hi)
-		return (i, j)
+	lift $ aux lo hi n []
 
-simpleTweak :: Int -> Tweak
-simpleTweak swapsPerIter = do
-	st <- get
-	let ap = cur st
-	(lo, hi) <- lift $ getBounds ap
-	swaps <- lift $ replicateM swapsPerIter $ do
+	where
+
+	aux lo hi 0 acc = return acc
+	aux lo hi n acc = do
 		i <- randomRIO (lo + 1, hi)
 		j <- randomRIO (lo + 1, hi)
-		return (i, j)
-	(i, j) <- lift $ foldM (\(i, j) (i', j') -> do
+		if i == j
+		then aux lo hi n acc
+		else aux lo hi (n - 1) $ (i, j) : acc
+
+minSample :: ArrPath -> [(Int, Int)] -> StateT ClimbState IO (Int, Int, Double)
+minSample ap samples = do
+	samples' <- lift $ sequence $ map (\(i, j) -> do
+		l <- lenDiff ap i j
+		return (i, j, l)) samples
+	return $ minimumBy (\(_, _, l) (_, _, l') -> compare l l') samples'
+	{-lift $ foldM (\(i, j) (i', j') -> do
 		len <- lenDiff ap i j
 		len' <- lenDiff ap i' j'
-		return $ if len < len' then (i, j) else (i', j')) (head swaps) (tail swaps)
-	diff <- lift $ lenDiff ap i j
+		return $ if len < len' then (i, j) else (i', j')) (head samples) (tail samples)-}
+	
+simpleTweak :: Int -> Tweak
+simpleTweak numOfSamples = do
+	ap <- liftM cur get
+	samples <- generateSamples' ap numOfSamples
+	(i, j, diff) <- minSample ap samples
 	lift $ arrSwap ap i j
-	lift $ return diff
-
-simpleTweak' :: Int -> Tweak
-simpleTweak' numOfSamples = do
-	st <- get
-	let ap = cur st
-	(lo, hi) <- lift $ getBounds ap
-	swaps <- lift $ replicateM numOfSamples $ do
-		i <- randomRIO (lo + 1, hi)
-		j <- randomRIO (lo + 1, hi)
-		return (i, j)
-	swaps' <- lift $ sequence $ map (\(i, j) -> do
-		l <- lenDiff ap i j
-		return (i, j, l)) swaps
-	let swaps'' = swaps' $> filter (\(i, j, _) -> i /= j)
-	if swaps'' == []
-	then lift $ return 0.0
-	else do
-		let (i, j, diff) = swaps'' $> minimumBy (\(_, _, l) (_, _, l') -> compare l l')
-		lift $ arrSwap ap i j
-		lift $ return diff
+	return diff
 
 fastTweak :: Int -> Tweak
 fastTweak numOfSamples = do
 	ap <- liftM cur get
-	samples <- generateSamples ap numOfSamples
-	diff <- lift $ foldM (\p (i, j) -> do
+	samples <- generateSamples' ap numOfSamples
+	(diff, rest) <- lift $ foldM (\(sum, rest) (i, j) -> do
 		len <- lenDiff ap i j
 		if len < 0.0
 		then do
 			arrSwap ap i j
-			return $ len + p
-		else return p) 0.0 samples
-	return diff
+			return $ (sum + len, rest)
+		else return (sum, (i, j, len):rest)) (0.0, []) samples
 	if diff < 0.0
 	then return diff
-	else simpleTweak' numOfSamples
+	else do
+		let (i, j, diff) = rest $> minimumBy (\(_, _, l) (_, _, l') -> compare l l')
+		lift $ arrSwap ap i j
+		return diff
 
 progressiveTweak :: Int -> Tweak
 progressiveTweak swapsPerIter = do
 	st <- get
 	simpleTweak $ floor $ fromIntegral swapsPerIter * (1.5 ^ (curIter st `div` 25000))
 
+-- Changed, did not test.
 newTabuTweak :: Int -> Int -> Tweak
 newTabuTweak numOfSamples tabuSize = do
-	st <- get
-	let ap = cur st
-	(lo, hi) <- lift $ getBounds ap
+	ap <- liftM cur get
+	curTabu <- liftM tabu get
+	{-(lo, hi) <- lift $ getBounds ap
 	swaps <- lift $ replicateM numOfSamples $ do
 		i <- randomRIO (lo + 1, hi)
 		j <- randomRIO (lo + 1, hi)
-		return (i, j)
-	swaps' <- lift $ sequence $ map (\(i, j) -> do
+		return (i, j)-}
+	samples <- generateSamples' ap numOfSamples
+	samples' <- lift $ sequence $ map (\(i, j) -> do
 		l <- lenDiff ap i j
-		return (i, j, l)) swaps
-	let swaps'' = swaps' $> filter (\(i, j, l) -> i /= j && (l < 25.0 || (i `notElem` take tabuSize (tabu st) && j `notElem` take tabuSize (tabu st))))
-	let (i, j, diff) = swaps'' $> minimumBy (\(_, _, l) (_, _, l') -> compare l l')
+		return (i, j, l)) samples
+	let samples'' = samples' $> filter (\(i, j, l) -> i /= j && (l < 25.0 || (i `notElem` take tabuSize curTabu && j `notElem` take tabuSize curTabu)))
+	let (i, j, diff) = samples'' $> minimumBy (\(_, _, l) (_, _, l') -> compare l l')
 	lift $ arrSwap ap i j
-	modify $ \st -> st {tabu = i : j : take (tabuSize - 2) (tabu st)}
+	modify $ \st -> st {tabu = i : j : take (tabuSize - 2) curTabu}
 	lift $ return diff
 
 noRestart :: Restart
@@ -295,7 +288,7 @@ arrayTest = do
 	chanel <- atomically $ newTVar 0.0
 	forkIO $ TSP.logBest chanel
 
-	climb randomArrPath (divergingEnd 500000 1000 100.0) (fastTweak 500) noRestart logStateToStdErr $ Config
+	climb randomArrPath (divergingEnd 5000000 1000 100.0) (fastTweak 15112) noRestart logStateToStdErr $ Config
 		{ numOfIter = 10^5
 		, swapsPerIter = 42
 		, restartThreshold = 2.0
@@ -309,6 +302,5 @@ arrayTest = do
 
 {-
 	Restart jest zbugowany.
-	hybridTweak jest zbugowany
 
 -}
