@@ -19,6 +19,3 @@ A quite large dataset with various problem sizes and known optima is the [TSPLIB
 ### Miscellaneous
 
 The Hill Climbing algorithms uses STM to log the best solution each second. There's some Julia code that can then draw some nice graphs using this data.
-
-### TODO
-3. Implement some form of Tabu Search.

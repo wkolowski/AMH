@@ -5,6 +5,7 @@ import HCArr
 
 import Data.Array.MArray
 import Data.Array.IO
+
 import System.IO
 import System.Random
 

@@ -4,7 +4,7 @@ module TSP where
 
 import Data.List
 import Data.Monoid
-import Data.Random.Normal
+--import Data.Random.Normal
 import Data.Array.MArray
 import Data.Array.IO
 
