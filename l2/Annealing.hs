@@ -217,7 +217,7 @@ anneal = do
 
 	printArr initPath
 
-	evalStateT aux $ AnnealingState { size = pathSize
+	evalStateT aux $ AnnealingState	{ size = pathSize
 					, temperature = initLen
 					, mulRate = 1 - 1e-6
 					, subRate = 1e-3 + initLen / 10^6

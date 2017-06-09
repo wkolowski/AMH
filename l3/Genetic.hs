@@ -224,7 +224,7 @@ evolve :: Int -> Mutate -> IO Double
 evolve populationSize mutate = do
 	(size, vertices, time) <- readInput
 
-	greedyPath <- mkPath size (greedy vertices)
+	greedyPath <- mkPath size vertices -- (greedy vertices)
 	otherPaths <- replicateM (populationSize - 1) (mkPath size vertices)
 	mapM_ randomize otherPaths
 
@@ -262,7 +262,7 @@ evolve populationSize mutate = do
 
 		mapM_ mutate worsts
 
-		{-lift $ forM_ worsts $ \path -> do
+		{-lift $ forM_ bests $ \path -> do
 			p <- randomRIO (0.0, 1.0) :: IO Double
 			when (p < 0.0001) (randomize path)-}
 
@@ -272,7 +272,65 @@ evolve populationSize mutate = do
 
 		return 42.0
 
-main = evolve 10000 (mutate 10)
+evolve2 :: Int -> Mutate -> IO Double
+evolve2 populationSize mutate = do
+	(size, vertices, time) <- readInput
+
+	greedyPath <- mkPath size vertices -- (greedy vertices)
+	otherPaths <- replicateM (populationSize - 1) (mkPath size vertices)
+	mapM_ randomize otherPaths
+
+	bestLen <- pathLen greedyPath
+
+	evalStateT aux $ EvolutionState	{ size = size
+					, time = time
+					, population = greedyPath : otherPaths
+					, best = greedyPath
+					, bestLen = bestLen
+	}
+
+	where
+
+	aux :: StateT EvolutionState IO Double
+	aux = do
+		st <- get
+
+		l <- lift $ forM (population st) $ \path -> do
+			len <- pathLen path
+			return (path, len)
+
+		let l'@((p, len):_) = l $> sortBy (compare `on` snd)
+
+		when (len < bestLen st) $ do
+			modify $ \st -> st {best = p, bestLen = len}
+			--lift $ printArr p
+
+		{-let	bests = take (8 * populationSize `div` 10) $ map fst l'
+			preworsts = take (populationSize `div` 10) $ drop (8 * populationSize `div` 10) $ map fst l'
+			worsts = take (populationSize `div` 10) $ drop (9 * populationSize `div` 10) $ map fst l'-}
+
+		let (bests, (middle, worsts)) = fmap (splitAt (8 * populationSize `div` 10)) $ splitAt (populationSize `div` 10) $ map fst l'
+	
+		lift $ putStrLn $ "Best length is " ++ show (snd (head l'))
+
+		lift $ zipWithM copy bests worsts
+
+		mapM_ mutate worsts
+
+		let newPopulation = bests ++ (middle ++ worsts)
+
+		{-lift $ forM_ bests $ \path -> do
+			p <- randomRIO (0.0, 1.0) :: IO Double
+			when (p < 0.0001) (randomize path)-}
+
+		modify $ \st -> st {population = newPopulation}
+
+		aux
+
+		return 42.0
+
+
+main = evolve2 10000 (mutate 100)
 
 -- berlin52 10000 10 wynik: 7884
 
